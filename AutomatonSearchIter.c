@@ -12,6 +12,7 @@
 
 static PyTypeObject automaton_search_iter_type;
 
+
 static PyObject*
 automaton_search_iter_new(
 	Automaton* automaton,
@@ -25,14 +26,10 @@ automaton_search_iter_new(
 	if (iter == NULL)
 		return NULL;
 
+	prepare_input((PyObject*)automaton, object, &iter->input);
+
 	iter->automaton = automaton;
 	iter->version	= automaton->version;
-	iter->object	= object;
-#ifdef AHOCORASICK_UNICODE
-	iter->data		= PyUnicode_AS_UNICODE(object);
-#else
-	iter->data		= (uint8_t*)PyBytes_AS_STRING(object);
-#endif
 
 	iter->state	= automaton->root;
 	iter->output= NULL;
@@ -41,7 +38,6 @@ automaton_search_iter_new(
 	iter->end	= end;
 
 	Py_INCREF(iter->automaton);
-	Py_INCREF(iter->object);
 
 	return (PyObject*)iter;
 }
@@ -51,7 +47,7 @@ automaton_search_iter_new(
 static void
 automaton_search_iter_del(PyObject* self) {
 	Py_DECREF(iter->automaton);
-	Py_DECREF(iter->object);
+	destroy_input(&iter->input);
 	PyObject_Del(self);
 }
 
@@ -128,7 +124,7 @@ return_output:
 		iter->state = ahocorasick_next(
 						iter->state,
 						iter->automaton->root,
-						iter->data[iter->index]
+						iter->input.word[iter->index]
 						);
 
 		ASSERT(iter->state);
@@ -150,34 +146,14 @@ automaton_search_iter_set(PyObject* self, PyObject* args) {
 	PyObject* flag;
 	ssize_t len;
 	bool reset;
+	struct Input new_input;
 
 	// first argument - required string or buffer
 	object = PyTuple_GetItem(args, 0);
 	if (object) {
-#ifdef PY3K
-    #ifdef AHOCORASICK_UNICODE
-        if (PyUnicode_Check(object))
-            len = PyUnicode_GET_SIZE(object);
-        else {
-            PyErr_SetString(PyExc_TypeError, "string required");
-            return NULL;
-        }
-    #else
-        if (PyBytes_Check(object))
-            len = PyBytes_GET_SIZE(object);
-        else {
-            PyErr_SetString(PyExc_TypeError, "string or bytes object required");
-            return NULL;
-        }
-    #endif
-#else
-        if (PyString_Check(object)) {
-            len = PyString_GET_SIZE(object);
-        } else {
-            PyErr_SetString(PyExc_TypeError, "string required 2");
-            return NULL;
-        }
-#endif
+		if (!prepare_input((PyObject*)iter->automaton, object, &new_input)) {
+			return NULL;
+		}
 	}
 	else
 		return NULL;
@@ -201,15 +177,8 @@ automaton_search_iter_set(PyObject* self, PyObject* args) {
 		reset = false;
 	}
 
-	// update internal state
-	Py_XDECREF(iter->object);
-	Py_INCREF(object);
-	iter->object	= object;
-#ifdef AHOCORASICK_UNICODE
-	iter->data = PyUnicode_AS_UNICODE(object);
-#else
-	iter->data = (uint8_t*)PyBytes_AS_STRING(object);
-#endif
+	destroy_input(&iter->input);
+	assign_input(&iter->input, &new_input);
 
 	if (!reset)
 		iter->shift += (iter->index >= 0) ? iter->index : 0;
